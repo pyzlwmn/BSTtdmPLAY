@@ -1,0 +1,23 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven {
+            name = 'MinecraftForge'
+            url = 'https://maven.minecraftforge.net/'
+        }
+    }
+}
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.7.0'
+}
+
+rootProject.name = 'bstcsdmplay'
+
+// ★ FPSMatch 以源码编入本项目（dev 环境不加载生产 jar，绕开 mixin/@Shadow 的坑）
+//   前置条件：项目根目录下要有 FPSMatch\ 文件夹（含 settings.gradle / build.gradle / src）
+includeBuild('FPSMatch') {
+    dependencySubstitution {
+        substitute module('net.ptcrys:fpsmatch') using project(':')
+    }
+}
