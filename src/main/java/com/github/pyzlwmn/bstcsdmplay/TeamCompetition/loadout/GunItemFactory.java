@@ -97,6 +97,11 @@ public final class GunItemFactory {
             return ItemStack.EMPTY;
         }
 
+        // ★ v43：开火模式传空/NATIVE → 用这把枪原版支持的（有全自动用全自动，没有用单发）
+        if (fireMode == null || fireMode.isBlank() || "NATIVE".equalsIgnoreCase(fireMode)) {
+            fireMode = nativeFireMode(rl.toString());
+        }
+
         // ① 普通物品
         Item item = BuiltInRegistries.ITEM.get(rl);
         if (item != Items.AIR) {
@@ -107,12 +112,153 @@ public final class GunItemFactory {
         if (taczLoaded()) {
             ItemStack stack = viaBuilder(rl, skin, mag, reserve, fireMode, attachments);
             if (stack == null || stack.isEmpty()) stack = byHand(rl, skin, mag, reserve, fireMode, attachments);
-            if (stack != null && !stack.isEmpty()) return stack;
+            if (stack != null && !stack.isEmpty()) {
+                // ★ v33：builder.putAttachment 对部分槽位会静默失败（主人日志：6 个只挂上 3 个）
+                //    → 回读确认，缺的用官方 installAttachment 补挂，保证「预览 = 实枪」一致
+                if (attachments != null && !attachments.isEmpty()) ensureAttachments(stack, attachments);
+                return stack;
+            }
         } else if (!warnedTacz) {
             warnedTacz = true;
             LOG.warn("[TDM·背包] 找不到物品 {}，且未安装 TaCZ → 该条目无效", gun);
         }
         return ItemStack.EMPTY;
+    }
+
+    /**
+     * ★ v33：补挂配件——回读当前已挂槽位，缺的用官方 installAttachment 再挂一遍。
+     * 背景：主人日志里 6 个类型「builder 返回 true」但回读只剩 3 个（SCOPE/GRIP/LASER 丢了），
+     *       导致预览/实枪看不到这些部件。这里做一次校验补挂。
+     */
+    private static void ensureAttachments(ItemStack stack, java.util.Map<String, String> attachments) {
+        try {
+            java.util.Set<String> have = installedTypes(stack);
+            boolean anyMissing = false;
+            for (String t : attachments.keySet()) {
+                if (!have.contains(t.toUpperCase())) {
+                    anyMissing = true;
+                    break;
+                }
+            }
+            if (!anyMissing) return;
+
+            Object igun = igunOf(stack);
+            if (igun == null) return;
+            for (java.util.Map.Entry<String, String> e : attachments.entrySet()) {
+                if (e.getValue() == null || e.getValue().isBlank()) continue;
+                if (have.contains(e.getKey().toUpperCase())) continue;
+                ItemStack att = createAttachment(e.getValue());
+                if (att.isEmpty()) continue;
+                Object r = call(igun, "installAttachment", stack, att);
+                LOG.info("[TDM·背包] 补挂配件 {}（{}）→ {}（installAttachment 返回 {}，回读 {}）",
+                        e.getValue(), e.getKey(), gunIdOf(stack), r, readAttachments(stack));
+            }
+        } catch (Throwable t) {
+            LOG.debug("[TDM·背包] 补挂配件异常：{}", t.toString());
+        }
+    }
+
+    /** 回读：当前已经挂上了哪些槽位类型（在 ATTACHMENT_TYPES 里能查到的） */
+    public static java.util.Set<String> installedTypes(ItemStack gun) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        Object igun = igunOf(gun);
+        if (igun == null) return out;
+        try {
+            Class<?> typeCls = Class.forName("com.tacz.guns.api.item.attachment.AttachmentType");
+            for (String name : ATTACHMENT_TYPES) {
+                Object type;
+                try {
+                    type = Enum.valueOf(typeCls.asSubclass(Enum.class), name);
+                } catch (Throwable t) {
+                    continue;
+                }
+                Object r = call(igun, "getAttachment", gun, type);
+                if (r instanceof ItemStack is && !is.isEmpty()) out.add(name);
+            }
+        } catch (Throwable ignored) {
+        }
+        return out;
+    }
+
+    /**
+     * ★ v35：实测「这把枪到底能不能装这个配件」。
+     *
+     * 背景（主人 2026-09-21 日志实锤）：
+     *   TaCZ 的 `allowAttachment` 会**乐观地返回 true**，但 `installAttachment` 才说真话：
+     *   - ak47 回读：SCOPE/MUZZLE/STOCK/EXTENDED_MAG 挂上了，GRIP/LASER 怎么都挂不上
+     *   - deagle 回读：MUZZLE/LASER/EXTENDED_MAG 挂上了，SCOPE/STOCK/GRIP 挂不上
+     *   → 界面里那些「装不上的槽位」就是主人说的「预览不了其它的部件」
+     *
+     * 做法：拿一份枪的副本真装一次，回读确认真的上了才算数（副本不影响原枪）。
+     */
+    // ================== v43：读 TaCZ 原版枪械数据（弹匣量 / 射击模式）==================
+
+    /** 原版弹匣容量（TaCZ gun data）；拿不到返回 -1 */
+    public static int nativeMagazine(String gunId) {
+        try {
+            Object gunData = gunDataOf(gunId);
+            if (gunData == null) return -1;
+            Object v = gunData.getClass().getMethod("getAmmoAmount").invoke(gunData);
+            return v instanceof Number n ? n.intValue() : -1;
+        } catch (Throwable t) {
+            LOG.debug("[TDM·背包] 读原版弹匣量失败 {}：{}", gunId, t.toString());
+            return -1;
+        }
+    }
+
+    /** 原版射击模式：fireModeSet 里有 AUTO → AUTO，否则 SEMI */
+    public static String nativeFireMode(String gunId) {
+        try {
+            Object gunData = gunDataOf(gunId);
+            if (gunData == null) return "SEMI";
+            Object set = gunData.getClass().getMethod("getFireModeSet").invoke(gunData);
+            if (set instanceof Iterable<?> it) {
+                for (Object m : it) {
+                    if (m != null && "AUTO".equalsIgnoreCase(m.toString())) return "AUTO";
+                }
+            }
+            return "SEMI";
+        } catch (Throwable t) {
+            return "SEMI";
+        }
+    }
+
+    /** 原版弹药：{弹匣, 弹匣×3}；读不到返回 {-1,-1} */
+    public static int[] nativeAmmo(String gunId) {
+        int mag = nativeMagazine(gunId);
+        return mag > 0 ? new int[]{mag, mag * 3} : new int[]{-1, -1};
+    }
+
+    /** 拿 TaCZ 的 GunData（走反射，TaCZ 没装就返回 null） */
+    private static Object gunDataOf(String gunId) {
+        try {
+            ResourceLocation rl = ResourceLocation.tryParse(gunId == null ? "" : gunId);
+            if (rl == null) return null;
+            Class<?> api = Class.forName("com.tacz.guns.api.TimelessAPI");
+            Object opt = api.getMethod("getCommonGunIndex", ResourceLocation.class).invoke(null, rl);
+            Object idx = opt;
+            if (opt instanceof java.util.Optional<?> o) idx = o.orElse(null);
+            if (idx == null) return null;
+            return idx.getClass().getMethod("getGunData").invoke(idx);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    public static boolean canReallyInstall(ItemStack gun, String attachmentId) {
+        if (gun == null || gun.isEmpty() || attachmentId == null || attachmentId.isBlank()) return false;
+        try {
+            ItemStack copy = gun.copy();
+            Object igun = igunOf(copy);
+            if (igun == null) return false;
+            ItemStack att = createAttachment(attachmentId);
+            if (att.isEmpty()) return false;
+            String type = AttachmentIndex.typeOf(attachmentId).toUpperCase();
+            call(igun, "installAttachment", copy, att);
+            return installedTypes(copy).contains(type);
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /**
@@ -395,7 +541,8 @@ public final class GunItemFactory {
                     ResourceLocation attId = ResourceLocation.tryParse(e.getValue());
                     if (type == null || attId == null) continue;
                     Object r = call(builder, "putAttachment", type, attId);
-                    LOG.info("[TDM·背包] 造枪时挂配件 {} → {}（builder 返回 {}）", e.getValue(), gunId, r != null);
+                    // ⚠️ putAttachment 返回的是 builder 本身，永远非 null → 这行只能当“请求了”看，不能当成功
+                    LOG.debug("[TDM·背包] 请求挂配件 {} → {}（已调用，返回非空={}）", e.getValue(), gunId, r != null);
                 }
             }
             Object stack = call(builder, "build");
@@ -407,7 +554,16 @@ public final class GunItemFactory {
                 applyFireMode(is, fireMode);
                 finishNbt(is, gunId, skin, mag, reserve, fireMode);
                 if (attachments != null && !attachments.isEmpty()) {
-                    LOG.info("[TDM·背包] {} 发枪带上配件，回读：{}", gunId, readAttachments(is));
+                    java.util.Set<String> have = installedTypes(is);
+                    StringBuilder miss = new StringBuilder();
+                    for (String t : attachments.keySet()) {
+                        if (!have.contains(t.toUpperCase())) {
+                            if (miss.length() > 0) miss.append(',');
+                            miss.append(t);
+                        }
+                    }
+                    LOG.info("[TDM·背包] {} 发枪带上配件，回读：{} ｜ 缺失：{}", gunId, readAttachments(is),
+                            miss.length() == 0 ? "无" : miss.toString());
                 }
                 return is;
             }

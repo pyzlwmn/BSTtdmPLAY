@@ -168,6 +168,8 @@ public class TeamCompetitionMap extends BaseMap {
 
     /** 进入对局前的 immediateRespawn 规则原值（对局结束还原） */
     private Boolean prevImmediateRespawn = null;
+    /** ★ v37：对局期间的 keepInventory 原值（对局结束还原） */
+    private Boolean prevKeepInventory = null;
 
     /** 本局已经发过装备的玩家（中途加入的也发一次） */
     private final Set<UUID> loadoutGiven = new HashSet<>();
@@ -494,6 +496,8 @@ public class TeamCompetitionMap extends BaseMap {
         this.cleaningUp = false;
         this.protectUntilTick.clear();
         applyFriendlyFire();
+        // ★ v37：对局中死亡不掉落（keepInventory=true），结束后还原
+        applyKeepInventory(true);
 
         msg("§6§l==== 对局开始 ====");
         msg("§e目标：" + targetKills.get() + " 击杀 ｜ 时限：" + matchTimeLimit.get() + " 秒");
@@ -608,8 +612,36 @@ public class TeamCompetitionMap extends BaseMap {
             pendingRespawn.clear();
             loadoutGiven.clear();
             applyImmediateRespawn(false);                // 还原 doImmediateRespawn 规则
+            applyKeepInventory(false);                   // ★ v37：还原死亡掉落规则
         } finally {
             this.cleaningUp = false;
+        }
+    }
+
+    /**
+     * ★ v37（主人 22:37 要求）：对局期间**死亡不掉落物品**。
+     * 做法：开局把 `keepInventory` 游戏规则置 true，结束/清理时还原原值。
+     * （和 applyImmediateRespawn 同一个套路：只记一次原值，避免反复读写）
+     */
+    private void applyKeepInventory(boolean on) {
+        try {
+            GameRules rules = getServerLevel().getGameRules();
+            GameRules.BooleanValue rule = rules.getRule(GameRules.RULE_KEEPINVENTORY);
+            if (on) {
+                if (prevKeepInventory == null) prevKeepInventory = rule.get();
+                if (!rule.get()) {
+                    rule.set(true, null);
+                    LOGGER.info("[TDM] 已开启死亡不掉落（keepInventory=true，原值 {}）", prevKeepInventory);
+                }
+            } else if (prevKeepInventory != null) {
+                if (rule.get() != prevKeepInventory) {
+                    rule.set(prevKeepInventory, null);
+                    LOGGER.info("[TDM] 已还原死亡掉落规则（keepInventory={}）", prevKeepInventory);
+                }
+                prevKeepInventory = null;
+            }
+        } catch (RuntimeException ignored) {
+            // 规则拿不到就算了，不影响对局
         }
     }
 
@@ -731,9 +763,10 @@ public class TeamCompetitionMap extends BaseMap {
         player.removeAllEffects();
         sendToTeamSpawn(player, true);
 
-        // ★ 重生：补满弹药；如果他的背包是空的（比如死亡时掉了）就整套重发
+        // ★ 重生：补满弹药 + **缺哪个槽补哪个**（v36：原来只有 5 个槽全空才整套重发，掉一件就不管）
         if (loadoutEnabled.get() && loadoutRefillOnRespawn.get()) {
             LoadoutManager.refillAmmo(player);
+            LoadoutManager.refillMissing(player);
         }
         if (loadoutEnabled.get() && LoadoutManager.emptyLoadout(player)) {
             applyLoadoutTo(player);
@@ -839,6 +872,7 @@ public class TeamCompetitionMap extends BaseMap {
         protectUntilTick.clear();
         loadoutGiven.clear();
         applyImmediateRespawn(false);
+        applyKeepInventory(false);                       // ★ v37：还原死亡掉落规则
         sendEveryoneToLobby();
         syncScores();
     }
@@ -850,10 +884,16 @@ public class TeamCompetitionMap extends BaseMap {
         return isStart;
     }
 
-    /** 现在能不能改装备（未开局随便改；对局中看设置） */
+    /**
+     * 现在能不能改装备。
+     * v31（主人 2026-09-21 要求）：**对局中一律锁定** —— 对局里不能改装备/背包/配件。
+     * （loadoutAllowEditInMatch 字段保留但不再生效；要改回旧行为就把上面两行换成
+     *   return !isStart || loadoutAllowEditInMatch.get(); ）
+     */
     public boolean canEditLoadout() {
         if (!loadoutEnabled.get()) return false;
-        return !isStart || loadoutAllowEditInMatch.get();
+        if (isStart) return false;
+        return true;
     }
 
     /** 按玩家在 UI 里的选择发一整套装备 */

@@ -98,13 +98,13 @@ public class TcpLoadoutScreen extends Screen {
         }
         int bx = innerX + innerW - 3 * 22 + 2;
         int maxPresets = TcpLoadoutData.maxPresets();
-        Button addB = Button.builder(Component.literal("＋"), btn ->
+        Button addB = Button.builder(Component.literal("+"), btn ->
                         TcpNetwork.CHANNEL.sendToServer(new TcpLoadoutPresetC2SPacket("create", "", "")))
                 .bounds(bx, py, 20, 16).build();
         addB.active = editable && presets.size() < maxPresets;
         addRenderableWidget(addB);
 
-        Button renameB = Button.builder(Component.literal("✎"), btn -> {
+        Button renameB = Button.builder(Component.literal("改"), btn -> {
                     renaming = !renaming;
                     rebuild();
                 })
@@ -113,7 +113,7 @@ public class TcpLoadoutScreen extends Screen {
         addRenderableWidget(renameB);
 
         TcpLoadoutS2CPacket.PresetData act = TcpLoadoutData.activePreset();
-        Button delB = Button.builder(Component.literal("✕"), btn -> {
+        Button delB = Button.builder(Component.literal("删"), btn -> {
                     if (act != null) {
                         TcpNetwork.CHANNEL.sendToServer(new TcpLoadoutPresetC2SPacket("delete", act.id(), ""));
                     }
@@ -149,7 +149,7 @@ public class TcpLoadoutScreen extends Screen {
         for (int i = 0; i < allSlots.size(); i++) {
             TcpLoadoutS2CPacket.SlotData data = allSlots.get(i);
             final int slot = data.slot();
-            Button b = Button.builder(Component.literal((slot == activeSlot ? "▶ " : "  ") + data.label()),
+            Button b = Button.builder(Component.literal((slot == activeSlot ? "> " : "  ") + data.label()),
                             btn -> {
                                 activeSlot = slot;
                                 page = 0;
@@ -160,14 +160,14 @@ public class TcpLoadoutScreen extends Screen {
             addRenderableWidget(b);
         }
         int toolY = colY + allSlots.size() * SLOT_BTN_H + 4;
-        Button refit = Button.builder(Component.literal("🔩 改装"), btn ->
+        Button refit = Button.builder(Component.literal("改装"), btn ->
                         TcpNetwork.CHANNEL.sendToServer(new TcpRefitC2SPacket("start", slotNameOf(activeSlot))))
                 .bounds(innerX, toolY, colW, SLOT_BTN_H - 2).build();
         refit.active = editable && !TcpLoadoutData.inMatch();     // v25：局内不可改装
         addRenderableWidget(refit);
         toolY += SLOT_BTN_H;
 
-        Button att = Button.builder(Component.literal("🔧 配件编辑"), btn ->
+        Button att = Button.builder(Component.literal("配件编辑"), btn ->
                         TcpNetwork.CHANNEL.sendToServer(new TcpAttachmentRequestC2SPacket()))
                 .bounds(innerX, toolY, colW, SLOT_BTN_H - 2).build();
         att.active = editable;
@@ -189,7 +189,7 @@ public class TcpLoadoutScreen extends Screen {
         for (int i = 0; i < shown; i++) {
             String id = options.get(page * PER_PAGE + i);
             boolean selected = id.equals(current);
-            Button b = Button.builder(Component.literal((selected ? "✔ " : "   ") + TcpGunNames.display(id)), btn ->
+            Button b = Button.builder(Component.literal((selected ? "> " : "   ") + TcpGunNames.display(id)), btn ->
                             TcpNetwork.CHANNEL.sendToServer(new TcpLoadoutSelectC2SPacket(activeSlot, id)))
                     .bounds(rx, ry + i * OPT_BTN_H, rw, OPT_BTN_H - 1)
                     .build();
@@ -200,11 +200,11 @@ public class TcpLoadoutScreen extends Screen {
         // 翻页（放在面板底部内侧）
         if (pages > 1) {
             int pgY = top + panelH - 30;
-            addRenderableWidget(Button.builder(Component.literal("◀"), btn -> {
+            addRenderableWidget(Button.builder(Component.literal("<"), btn -> {
                 page = Math.max(0, page - 1);
                 rebuild();
             }).bounds(rx, pgY, 20, 16).build());
-            addRenderableWidget(Button.builder(Component.literal("▶"), btn -> {
+            addRenderableWidget(Button.builder(Component.literal(">"), btn -> {
                 page = Math.min(pages - 1, page + 1);
                 rebuild();
             }).bounds(rx + 24, pgY, 20, 16).build());
@@ -217,9 +217,10 @@ public class TcpLoadoutScreen extends Screen {
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         renderBackground(g);
 
-        UiDraw.panel(g, left, top, panelW, panelH, UiDraw.RADIUS_LARGE, 0xFF3A4A5A, 0xE6101418);
-        UiDraw.topBarRounded(g, left, top, panelW, 24, UiDraw.RADIUS_MEDIUM, 0xFF1B2A41);
-        g.drawString(this.font, "🎒 装备编辑", left + 10, top + 8, 0xFFFFFFF0, false);
+        // v38：投影 + 渐变 + 描边 + 金色顶条
+        UiDraw.panelEx(g, left, top, panelW, panelH, UiDraw.RADIUS_LARGE, 0xFF3A4A5A, 0xF01A2432, 0xE60D131C, 0xFFFFC93C);
+        UiDraw.topBarRounded(g, left, top, panelW, 24, UiDraw.RADIUS_LARGE, 0xFF1B2A41);   // ★ v44：与面板同半径，避免上两角变方
+        g.drawString(this.font, "装备编辑", left + 10, top + 8, 0xFFFFFFF0, false);
 
         String right = TcpLoadoutData.inMatch() ? "对局中" : "未开局";
         g.drawString(this.font, right, left + panelW - 10 - this.font.width(right), top + 8, 0xFFBBD0E0, false);
@@ -243,7 +244,7 @@ public class TcpLoadoutScreen extends Screen {
         }
 
         String hint = TcpLoadoutData.canEdit()
-                ? "点击右侧装备选择 · ✎ 改背包名 · ＋ 新建背包 · 🔧 配件编辑 · ESC 关闭"
+                ? "点右侧选择 · ESC 关闭"
                 : "对局中不可修改装备 · ESC 关闭";
         g.drawString(this.font, hint, left + 10, top + panelH - 14, 0xFFAAAAAA, false);
 

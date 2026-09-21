@@ -160,12 +160,13 @@ public final class LoadoutManager {
         if (all.isEmpty()) return List.of();
 
         boolean hasSkinData = SkinRegistry.hasFile(player);
-        java.util.Set<String> owned = hasSkinData ? SkinRegistry.ownedIds(player) : java.util.Set.of();
+        // v27：按槽位取皮肤（player_skin 里 skins.rifle / skins.pistol … 分组只在该槽位生效）
+        java.util.Set<String> owned = hasSkinData ? SkinRegistry.ownedIds(player, slot) : java.util.Set.of();
 
         List<String> out = new ArrayList<>();
         for (String raw : all) {
             String base = baseGun(raw);
-            boolean skinUnlocked = hasSkinData && SkinRegistry.matchId(player, base) != null;
+            boolean skinUnlocked = hasSkinData && SkinRegistry.matchId(player, base, slot) != null;
             if (LoadoutConfig.showBaseGuns() || skinUnlocked
                     || (!hasSkinData && LoadoutConfig.showAllWhenNoSkinFile())) {
                 if (!out.contains(raw)) out.add(raw);
@@ -269,6 +270,12 @@ public final class LoadoutManager {
         if (id == null) return ItemStack.EMPTY;
         String base = baseGun(id);
         int[] ammo = LoadoutConfig.ammoFor(base);
+        if (ammo[0] < 0) {
+            // ★ v43：没配 → 原版弹匣量，备弹 = 弹匣 × 3
+            int[] nat = GunItemFactory.nativeAmmo(base);
+            int mag = nat[0] > 0 ? nat[0] : 30;
+            ammo = new int[]{mag, ammo[1] >= 0 ? ammo[1] : mag * 3};
+        }
         Map<String, String> atts = effectiveAttachments(player, slotName);
         ItemStack stack = GunItemFactory.create(id, ammo[0], ammo[1], LoadoutConfig.fireFor(base), atts);
         if (stack.isEmpty()) {
@@ -303,6 +310,34 @@ public final class LoadoutManager {
         if (slot < 0 || slot >= LoadoutConfig.SLOT_COUNT) return;
         player.getInventory().setItem(slot, build(player, slot));
         sync(player);
+    }
+
+    /**
+     * ★ v36：重生补装——**缺哪个槽补哪个**。
+     *
+     * 主人 2026-09-21 反馈：「只掉了一件东西，重生不给我补；全掉光了反而给我补」
+     * 原因：refillAmmo 只看「槽里已经有东西」的枪（空槽直接 continue），
+     *       emptyLoadout 又要 5 个槽全空才整套重发 → 中间态（少 1~4 件）永远没人管。
+     *
+     * @return 补回来的槽数
+     */
+    public static int refillMissing(ServerPlayer player) {
+        if (!LoadoutConfig.enabled()) return 0;
+        int fixed = 0;
+        for (int slot = 0; slot < LoadoutConfig.SLOT_COUNT; slot++) {
+            if (pick(player, slot) == null) continue;          // 这个槽本来就没配东西
+            ItemStack cur = player.getInventory().getItem(slot);
+            if (!cur.isEmpty()) continue;                      // 还在 → 不动
+            ItemStack stack = build(player, slot);
+            if (stack.isEmpty()) continue;                     // 造不出来（配置错/模组没装）
+            player.getInventory().setItem(slot, stack);
+            fixed++;
+        }
+        if (fixed > 0) {
+            sync(player);
+            LOG.info("[TDM·背包] {} 重生补装：补回 {} 个空槽", player.getName().getString(), fixed);
+        }
+        return fixed;
     }
 
     /** 补满弹药 */
@@ -459,6 +494,12 @@ public final class LoadoutManager {
                     String cur = eff.get(type);
                     if (cur != null && !cur.isBlank() && !options.contains(cur)) options.add(cur);
                     if (options.isEmpty()) continue;
+                    // ★ v35：TaCZ 的 allowAttachment 会乐观返回 true，真正装不上（枪本身没这个挂点）
+                    //    → 拿一份副本真装一次验证；装不上的槽位直接不显示（否则悬停没任何变化）
+                    if (!GunItemFactory.canReallyInstall(gunStack, options.get(0))
+                            && (cur == null || cur.isBlank() || !GunItemFactory.canReallyInstall(gunStack, cur))) {
+                        continue;
+                    }
                     types.add(new TcpAttachmentS2CPacket.TypeEntry(type, cur, options));
                 }
             }
@@ -608,6 +649,7 @@ public final class LoadoutManager {
         sb.append("§6【背包诊断】").append(player.getName().getString()).append('\n');
         sb.append("配置文件：").append(LoadoutConfig.exists() ? LoadoutConfig.file().toString() : "§c不存在！").append('\n');
         sb.append("皮肤目录：").append(LoadoutConfig.skinFolder())
+                .append(" ｜ 槽位过滤：").append(LoadoutConfig.skinSlotFilter() ? "§a开" : "§e关")
                 .append(" ｜ 你的皮肤文件：").append(SkinRegistry.sourceOf(player) == null ? "§e（没有）" : SkinRegistry.sourceOf(player))
                 .append('\n');
         sb.append("你拥有的枪皮/物品 id：").append(SkinRegistry.debugDump(player)).append('\n');

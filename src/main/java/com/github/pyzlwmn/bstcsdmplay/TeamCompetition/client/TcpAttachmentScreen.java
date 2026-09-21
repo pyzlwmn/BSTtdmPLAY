@@ -7,6 +7,8 @@ import com.github.pyzlwmn.bstcsdmplay.TeamCompetition.net.TcpAttachmentS2CPacket
 import com.github.pyzlwmn.bstcsdmplay.TeamCompetition.net.TcpNetwork;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import com.mojang.math.Axis;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -14,16 +16,17 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 配件编辑页（v27.2：大预览 + 真模型渲染 + 文本不出框）
+ * 配件编辑页（v30：大预览 + 左键拖动旋转 + 悬停试装预览 + 图标去 emoji）
  *
  * ┌─────────────────────────────┬────────────────────────────┐
  * │                             │ 瞄具：xxx                   │
  * │      大号枪械模型预览          │ 枪口：—                     │
  * │      （BEWLR 真模型 9×）      │ …                          │
- * │  [当前装配件摘要…]             │ ├ 配件列表（✔=已装）          │
+ * │  [当前装配件摘要…]             │ ├ 配件列表（>=已装）          │
  * │ [枪位1][枪位2]…               │ │ …                        │
  * └─────────────────────────────┴────────────────────────────┘
  */
@@ -51,6 +54,38 @@ public class TcpAttachmentScreen extends Screen {
     private String activeType = null;
     private int page = 0;
     private int builtVersion = -1;
+
+    // ================== v30：左键拖动旋转 ==================
+    /** 初始偏角（给一点角度看起来更立体） */
+    private static final float ROT_START_Y = 25.0f;
+    /** 俯仰限幅 */
+    private static final float ROT_MAX_X = 70.0f;
+    private float rotY = ROT_START_Y;
+    private float rotX = 0.0f;
+    private boolean dragging = false;
+    private double dragAnchorX = 0.0;
+    private double dragAnchorY = 0.0;
+    private float dragBaseRotY = 0.0f;
+    private float dragBaseRotX = 0.0f;
+
+    // ================== v30：悬停试装预览 ==================
+    /** 当前鼠标悬停的配件（type / id），仅客户端，不写服务端 */
+    private String hoverType = null;
+    private String hoverId = null;
+    /** 配件列表按钮 + 对应 {type, id}，用于鼠标命中检测 */
+    private final List<AbstractWidget> listButtons = new ArrayList<>();
+    private final List<String[]> listButtonIds = new ArrayList<>();
+
+    // ================== v30：预览框几何（rebuild 算好，render/鼠标事件共用）==================
+    private int pvX;
+    private int pvY;
+    private int pvW;
+    private int pvH;
+
+    // ================== v32：预览枪缓存 ==================
+    /** 之前每帧重建预览枪 → 每帧刷 7 行日志 + 反射开销；改成「组合没变就不重建」 */
+    private ItemStack cachedPreview = ItemStack.EMPTY;
+    private String cachedPreviewKey = null;
 
     public TcpAttachmentScreen() {
         super(Component.literal("配件编辑"));
@@ -89,6 +124,8 @@ public class TcpAttachmentScreen extends Screen {
 
     private void rebuild() {
         clearWidgets();
+        listButtons.clear();
+        listButtonIds.clear();
         builtVersion = TcpAttachmentData.version();
 
         boolean editable = TcpAttachmentData.canEdit();
@@ -98,6 +135,11 @@ public class TcpAttachmentScreen extends Screen {
         // 预览框高度按面板高度自适应（给标题/摘要/枪位按钮/提示留出空间）
         int rowCount = Math.max(1, (guns.size() + 1) / 2);
         int previewH = Math.max(70, Math.min(PREVIEW_H, panelH - 96 - rowCount * 15));
+        // v30：预览框几何统一在这里算，render() 与鼠标事件共用
+        this.pvX = left + 10;
+        this.pvY = top + 30;
+        this.pvW = leftColW;
+        this.pvH = previewH;
 
         // 枪位按钮（预览框下方，两列）
         int gunY = top + 30 + previewH + 6;
@@ -107,11 +149,13 @@ public class TcpAttachmentScreen extends Screen {
             final String slotName = g.slotName();
             int col = i % 2;
             int row = i / 2;
-            Button b = Button.builder(Component.literal((slotName.equals(activeGun) ? "▶" : " ") + fit(g.label(), halfW - 6)),
+            Button b = Button.builder(Component.literal((slotName.equals(activeGun) ? ">" : " ") + fit(g.label(), halfW - 6)),
                             btn -> {
                                 activeGun = slotName;
                                 activeType = null;
                                 page = 0;
+                                rotY = ROT_START_Y;      // v30：换枪复位角度
+                                rotX = 0.0f;
                                 rebuild();
                             })
                     .bounds(left + 10 + col * (halfW + 4), gunY + row * 15, halfW, 14)
@@ -132,7 +176,7 @@ public class TcpAttachmentScreen extends Screen {
                 final String type = t.type();
                 String cur = t.current() == null ? "—" : TcpGunNames.attachmentName(t.current());
                 String label = LoadoutConfig.typeLabel(type) + "：" + cur;
-                Button b = Button.builder(Component.literal((type.equals(activeType) ? "▶ " : "  ")
+                Button b = Button.builder(Component.literal((type.equals(activeType) ? "> " : "  ")
                                 + fit(label, rw - 8)),
                                 btn -> {
                                     activeType = type;
@@ -160,7 +204,7 @@ public class TcpAttachmentScreen extends Screen {
             for (int i = 0; i < shown; i++) {
                 String id = options.get(page * PER_PAGE + i);
                 boolean selected = id.equals(t.current());
-                Button b = Button.builder(Component.literal((selected ? "✔ " : "   ")
+                Button b = Button.builder(Component.literal((selected ? "> " : "   ")
                                 + fit(TcpGunNames.attachmentName(id), rw - 8)), btn ->
                                 TcpNetwork.CHANNEL.sendToServer(
                                         new TcpAttachmentSelectC2SPacket(activeGun, activeType, selected ? "" : id)))
@@ -168,10 +212,12 @@ public class TcpAttachmentScreen extends Screen {
                         .build();
                 b.active = editable;
                 addRenderableWidget(b);
+                listButtons.add(b);                              // v30：悬停命中检测
+                listButtonIds.add(new String[]{activeType, id});
             }
             int btnY = top + panelH - 26;
             if (t.current() != null) {
-                Button un = Button.builder(Component.literal("✖ 卸下"), btn ->
+                Button un = Button.builder(Component.literal("卸下"), btn ->
                                 TcpNetwork.CHANNEL.sendToServer(
                                         new TcpAttachmentSelectC2SPacket(activeGun, activeType, "")))
                         .bounds(rx, btnY, 56, 16).build();
@@ -179,11 +225,11 @@ public class TcpAttachmentScreen extends Screen {
                 addRenderableWidget(un);
             }
             if (pages > 1) {
-                addRenderableWidget(Button.builder(Component.literal("◀"), btn -> {
+                addRenderableWidget(Button.builder(Component.literal("<"), btn -> {
                     page = Math.max(0, page - 1);
                     rebuild();
                 }).bounds(rx + rw - 44, btnY, 20, 16).build());
-                addRenderableWidget(Button.builder(Component.literal("▶"), btn -> {
+                addRenderableWidget(Button.builder(Component.literal(">"), btn -> {
                     page = Math.min(pages - 1, page + 1);
                     rebuild();
                 }).bounds(rx + rw - 22, btnY, 20, 16).build());
@@ -197,9 +243,10 @@ public class TcpAttachmentScreen extends Screen {
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         renderBackground(g);
 
-        UiDraw.panel(g, left, top, panelW, panelH, UiDraw.RADIUS_LARGE, 0xFF3A4A5A, 0xE6101418);
-        UiDraw.topBarRounded(g, left, top, panelW, 24, UiDraw.RADIUS_MEDIUM, 0xFF1B2A41);
-        g.drawString(this.font, "🔧 配件编辑", left + 10, top + 8, 0xFFFFFFF0, false);
+        // v38：投影 + 渐变 + 描边 + 金色顶条
+        UiDraw.panelEx(g, left, top, panelW, panelH, UiDraw.RADIUS_LARGE, 0xFF3A4A5A, 0xF01A2432, 0xE60D131C, 0xFFFFC93C);
+        UiDraw.topBarRounded(g, left, top, panelW, 24, UiDraw.RADIUS_LARGE, 0xFF1B2A41);   // ★ v44：与面板同半径，避免上两角变方
+        g.drawString(this.font, "配件编辑", left + 10, top + 8, 0xFFFFFFF0, false);
 
         if (!TcpAttachmentData.received()) {
             g.drawString(this.font, "读取中…", left + 14, top + 60, 0xFFCCCCCC, false);
@@ -215,17 +262,47 @@ public class TcpAttachmentScreen extends Screen {
             return;
         }
 
-        // 预览框
-        int leftColW = Math.max(60, Math.min(LEFT_W, panelW / 2 - 24));
-        int rowCount = Math.max(1, (gun.types().isEmpty() ? 1 : 1));
-        int previewH = Math.max(70, Math.min(PREVIEW_H, panelH - 96 - Math.max(1, (TcpAttachmentData.guns().size() + 1) / 2) * 15));
-        int px = left + 10;
-        int py = top + 30;
-        UiDraw.panel(g, px, py, leftColW, previewH, UiDraw.RADIUS_MEDIUM, 0xFF2A3A4A, 0xFF141C24);
+        // v30：悬停配件列表项 → 实时试装预览（只改本地预览，不写服务端）
+        hoverType = null;
+        hoverId = null;
+        AbstractWidget hoverW = null;
+        if (TcpAttachmentData.canEdit()) {
+            for (int i = 0; i < listButtons.size() && i < listButtonIds.size(); i++) {
+                AbstractWidget w = listButtons.get(i);
+                if (mouseX >= w.getX() && mouseX < w.getX() + w.getWidth()
+                        && mouseY >= w.getY() && mouseY < w.getY() + w.getHeight()) {
+                    hoverType = listButtonIds.get(i)[0];
+                    hoverId = listButtonIds.get(i)[1];
+                    hoverW = w;
+                    break;
+                }
+            }
+        }
+        // v39：悬停项加 1px 金色描边（更明确的反馈）
+        if (hoverW != null) {
+            int ox = hoverW.getX() - 1, oy = hoverW.getY() - 1;
+            int ow = hoverW.getWidth() + 2, oh = hoverW.getHeight() + 2;
+            g.fill(ox, oy, ox + ow, oy + 1, 0xFFFFC93C);
+            g.fill(ox, oy + oh - 1, ox + ow, oy + oh, 0xFFFFC93C);
+            g.fill(ox, oy + 1, ox + 1, oy + oh - 1, 0xFFFFC93C);
+            g.fill(ox + ow - 1, oy + 1, ox + ow, oy + oh - 1, 0xFFFFC93C);
+        }
+
+        // 预览框（几何在 rebuild() 里算好）
+        int px = pvX;
+        int py = pvY;
+        int leftColW = pvW;
+        int previewH = pvH;
+        // v38：预览框 = 描边（悬停金）+ 渐变底
+        UiDraw.fillRounded(g, px - 1, py - 1, leftColW + 2, previewH + 2, UiDraw.RADIUS_MEDIUM + 1,
+                hoverId != null ? 0xFFFFC93C : 0xFF2A3A4A);
+        UiDraw.fillVGradient(g, px, py, leftColW, previewH, UiDraw.RADIUS_MEDIUM, 0xFF1B2634, 0xFF0E141C);
 
         // 大号模型渲染：直接调 TaCZ 的 BEWLR，但要补上原版 GUI 的 (16, -16, 16) 归一化与 Y 翻转
-        ItemStack preview = previewStack(gun);
+        ItemStack preview = previewStack(gun, hoverType, hoverId);
         if (!preview.isEmpty()) {
+            // ★ v49：告诉 TaCZ「我们现在是 GUI 渲染」→ 它才会走「高模（含配件）」
+            markTaczGuiRender();
             Minecraft mc = Minecraft.getInstance();
             var buffers = mc.renderBuffers().bufferSource();
             float cx = px + leftColW / 2.0f;
@@ -233,6 +310,9 @@ public class TcpAttachmentScreen extends Screen {
             g.pose().pushPose();
             g.pose().translate(cx, cy, 100f);
             g.pose().scale(GUN_SCALE, GUN_SCALE, GUN_SCALE);
+            // ★ v30：左键拖动旋转（绕模型中心；先 Y 后 X，X 限幅）
+            g.pose().mulPose(Axis.YP.rotationDegrees(rotY));
+            g.pose().mulPose(Axis.XP.rotationDegrees(rotX));
             boolean rendered = false;
             try {
                 var ext = net.minecraftforge.client.extensions.common.IClientItemExtensions.of(preview);
@@ -245,7 +325,7 @@ public class TcpAttachmentScreen extends Screen {
                     }
                     // ★ 必须用 FIXED（模型）：TaCZ 的 display 里 GUI 对应的是 2D “slot 贴图”，
                     //   用 GUI 上下文就变成平面图标（糊）
-                    bewlr.renderByItem(preview, ItemDisplayContext.FIXED, g.pose(), buffers,
+                    bewlr.renderByItem(preview, previewContext(), g.pose(), buffers,
                             0xF000F0, OverlayTexture.NO_OVERLAY);
                     g.pose().popPose();
                     rendered = true;
@@ -253,7 +333,7 @@ public class TcpAttachmentScreen extends Screen {
             } catch (Throwable ignored) {
             }
             if (!rendered) {
-                mc.getItemRenderer().renderStatic(preview, ItemDisplayContext.FIXED, 0xF000F0,
+                mc.getItemRenderer().renderStatic(preview, previewContext(), 0xF000F0,
                         OverlayTexture.NO_OVERLAY, g.pose(), buffers, mc.level, 0);
             }
             g.pose().popPose();
@@ -270,21 +350,73 @@ public class TcpAttachmentScreen extends Screen {
         g.drawString(this.font, fit(sb.length() == 0 ? "（未装配件）" : sb.toString(), leftColW - 8),
                 px + 4, py + previewH - 13, 0xFFBBD0E0, false);
 
-        String hint = TcpAttachmentData.canEdit() ? "按 ESC 返回"
-                : "ESC 返回";
+        String hint = TcpAttachmentData.canEdit()
+                ? "拖动旋转 · 右键复位 · ESC 返回"
+                : "对局中不可修改配件 · ESC 返回";
         g.drawString(this.font, fit(hint, panelW - 20), left + 10, top + panelH - 14, 0xFFAAAAAA, false);
+
+        // v30：预览中提示（悬停时显示在预览框左上角）——v32 加上槽位类型名 + 配件图标
+        if (hoverId != null && !hoverId.isBlank()) {
+            String label = LoadoutConfig.typeLabel(hoverType) + " " + TcpGunNames.attachmentName(hoverId);
+            g.drawString(this.font, fit("预览：" + label, leftColW - 8), px + 4, py + 4, 0xFFFFC93C, true);
+            try {
+                ItemStack hoverAtt = GunItemFactory.createAttachment(hoverId);
+                if (!hoverAtt.isEmpty()) {
+                    g.renderItem(hoverAtt, px + leftColW - 22, py + previewH - 20);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
 
         super.render(g, mouseX, mouseY, partialTick);
     }
 
-    /** 预览用：把当前选中的配件也挂上去 */
-    private ItemStack previewStack(TcpAttachmentS2CPacket.GunEntry gun) {
+    /**
+     * ★ v49（关键修复）：TaCZ 的枪模渲染器用
+     *   `RenderDistance.inRenderHighPolyModelDistance(poseStack)` 决定画「高模（含配件）」还是「低模」，
+     *   而这个方法**第一句就是 `isGuiRender()`** —— 只有调用过 `markGuiRenderTimestamp()` 才算 GUI 渲染。
+     *
+     * 我们之前没调 → TaCZ 当成非 GUI（世界/远景）渲染 → 走低模 → 枪身画得出来、配件全不画。
+     * （反汇编 GunItemRendererWrapper#lambda$renderByItem$6 与 RenderDistance#inRenderHighPolyModelDistance 实锤）
+     */
+    private static void markTaczGuiRender() {
+        try {
+            Class.forName("com.tacz.guns.util.RenderDistance")
+                    .getMethod("markGuiRenderTimestamp")
+                    .invoke(null);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** ★ v46：预览渲染上下文（可在 config/bstcsdmplay/loadout.json 改 previewContext） */
+    private static ItemDisplayContext previewContext() {
+        try {
+            return ItemDisplayContext.valueOf(LoadoutConfig.previewContext());
+        } catch (Throwable t) {
+            return ItemDisplayContext.FIXED;
+        }
+    }
+
+    /**
+     * 预览用：把当前选中的配件挂上；若鼠标悬停在某个配件上，用它临时顶替该槽位（纯客户端，不写服务端）
+     * v32：结果按「枪 + 配件组合」缓存，组合没变就直接复用（修每帧重建 / 日志刷屏）
+     */
+    private ItemStack previewStack(TcpAttachmentS2CPacket.GunEntry gun, String hType, String hId) {
         try {
             java.util.Map<String, String> atts = new java.util.LinkedHashMap<>();
             for (TcpAttachmentS2CPacket.TypeEntry t : gun.types()) {
                 if (t.current() != null && !t.current().isBlank()) atts.put(t.type(), t.current());
             }
-            return GunItemFactory.create(gun.gunId(), 30, 300, "AUTO", atts);
+            if (hType != null && hId != null && !hId.isBlank()) atts.put(hType, hId);
+
+            String key = gun.gunId() + "#" + atts;
+            if (key.equals(cachedPreviewKey)) return cachedPreview;
+
+            int[] na = GunItemFactory.nativeAmmo(gun.gunId());      // ★ v43：原版弹匣 + 备弹 ×3
+            ItemStack stack = GunItemFactory.create(gun.gunId(), na[0], na[1], "NATIVE", atts);
+            cachedPreviewKey = key;
+            cachedPreview = stack;
+            return stack;
         } catch (Throwable t) {
             return ItemStack.EMPTY;
         }
@@ -304,6 +436,53 @@ public class TcpAttachmentScreen extends Screen {
             w += cw;
         }
         return sb + ellipsis;
+    }
+
+    // ================== v30：左键拖动旋转 / 右键复位 ==================
+
+    /** 鼠标是否落在预览框内 */
+    private boolean inPreview(double mx, double my) {
+        return mx >= pvX && mx < pvX + pvW && my >= pvY && my < pvY + pvH;
+    }
+
+    @Override
+    public boolean mouseClicked(double mx, double my, int button) {
+        if (super.mouseClicked(mx, my, button)) return true;
+        if (!inPreview(mx, my)) return false;
+        if (button == 1) {                     // 右键：复位角度
+            rotY = ROT_START_Y;
+            rotX = 0.0f;
+            return true;
+        }
+        if (button == 0) {                     // 左键：开始拖动
+            dragging = true;
+            dragAnchorX = mx;
+            dragAnchorY = my;
+            dragBaseRotY = rotY;
+            dragBaseRotX = rotX;
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public boolean mouseDragged(double mx, double my, int button, double dragX, double dragY) {
+        if (dragging) {
+            rotY = dragBaseRotY + (float) (mx - dragAnchorX) * 1.2f;
+            rotX = Math.max(-ROT_MAX_X, Math.min(ROT_MAX_X,
+                    dragBaseRotX + (float) (my - dragAnchorY) * 1.0f));
+            return true;
+        }
+        return super.mouseDragged(mx, my, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mx, double my, int button) {
+        if (dragging && button == 0) {
+            dragging = false;
+            return true;
+        }
+        return super.mouseReleased(mx, my, button);
     }
 
     @Override

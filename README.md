@@ -25,38 +25,28 @@
 ## 功能
 
 **对局**
-- 两队对抗（红/蓝）+ 观战队；目标击杀数、时限、每队人数都是地图设置
-- 开局前倒计时（期间免疫伤害），结束后 MVP/SVP 结算面板
-- 开局方式：全员 `/ready` 才能开（有人没准备就开不了）／OP 可 `debug start`；**已取消"满人自动开"**
-- `/fpsm map modify tdm <地图> debug reset` = 直接结束对局；`cleanup` 清场
+- 两队对抗（红/蓝）；目标击杀数(30)、时限(5min)
+- 开局前倒计时（期间免疫伤害），结束后显示 MVP/SVP 结算面板
+- 开局方式：全员 `/ready` 才能开（有人没准备就开不了）／OP 可 `debug start`
 - 死亡后自动回本队出生点、秒回重生、重生保护
 - 离队/退出地图 → 自动传回出生点
 
 **HUD / 界面**
 - 顶部比分条（双方头像组 + 目标 + 剩余时间）、击杀提示（带武器图标，最多 5 条）
 - Tab 面板：比分/剩余时间/头像/击杀/死亡/助攻/伤害，居中且超屏自动缩小
-- 所有面板圆角 + 抗锯齿
 
 **背包装备（loadout）**
 - 槽位固定：1 步枪 / 2 手枪 / 3 投掷物 / 4 道具 / 5 近战
 - 配置文件 `config/bstcsdmplay/loadout.json`（每个槽位写哪些枪、弹药/备弹/开火模式、配件池、默认配件）
 - **多背包**：每人可建多个背包（自定义名字，默认上限 5），每个背包独立保存每槽的枪与配件
-- 皮肤联动：扫描 `kubejs/config/player_skin/*.json`，配置里有的枪 ∩ 玩家拥有的枪皮才进列表
+- 皮肤联动：使用配套kubejs脚本，后期发布
 - 按键 **`;`** 打开编辑界面（可在按键设置里改），也支持 `/tdmloadout`
-- 开局自动发枪（自带配件与弹药），中途加入也会发；重生补弹
 
 **配件**
-- 「🔧 配件编辑」页：大号 3D 模型预览（直接调用 TaCZ 的模型渲染器），按槽位类型（瞄具/枪口/枪托/握把/激光/弹匣）选择，只列**这把枪真能装**的配件
-- 「🔩 改装」：打开 **TaCZ 原版改装面板**（本地虚拟打开，不动玩家背包），关闭面板自动把改装结果存进当前背包该枪位，开局直接发这把成品枪
+- 「配件编辑」页：大号 3D 模型预览（直接调用 TaCZ 的模型渲染器），按槽位类型（瞄具/枪口/枪托/握把/激光/弹匣）选择，只列**这把枪真能装**的配件
+- 「改装」：打开 **TaCZ 原版改装面板** 关闭面板自动把改装结果存进当前背包该枪位，开局直接发这把成品
 
-**指令**
-- `/tdmloadout` 打开编辑界面 / `debug` 打印诊断 / `ids` 列出可用枪械与配件 id / `reload` 重读配置 / `attdebug` 配件诊断
 
-## 已知问题 / TODO
-
-- [ ] 配件编辑页的模型缩放/居中常量按需微调（`TcpAttachmentScreen.GUN_SCALE` / `GUN_OFFSET_X/Y`）
-- [ ] 商店系统（买枪菜单）尚未接入 tdm 玩法
-- [ ] 更多地图设置项与观战细节
 
 ## 授权
 
@@ -64,7 +54,7 @@
 
 本项目是 [FPSMatch](https://github.com/PhasetransCrystal/FPSMatch)（GPL-3.0）与 [BlockOffensive](https://github.com/PhasetransCrystal/BlockOffensive)（GPL-3.0）的衍生作品，按 GPL-3.0 要求继续以 GPL-3.0 开源；部分玩法结构参考了 BlockOffensive 的实现。
 
-## 致谢
+## 引用/参考/致谢
 
 - [FPSMatch](https://github.com/PhasetransCrystal/FPSMatch) — 对局框架（地图/队伍/能力/HUD）
 - [BlockOffensive](https://github.com/PhasetransCrystal/BlockOffensive) — CS 玩法参考

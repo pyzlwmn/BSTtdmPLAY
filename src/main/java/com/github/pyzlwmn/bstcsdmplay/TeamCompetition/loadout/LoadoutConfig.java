@@ -30,6 +30,7 @@ import java.util.Map;
  *   "refillOnRespawn": true,
  *   "allowEditInMatch": true,
  *   "skinFolder": "kubejs/config/player_skin",
+ *   "skinSlotFilter": true,
  *   "showBaseGuns": true,
  *   "skinEntries": true,
  *   "showAllWhenNoSkinFile": true,
@@ -44,6 +45,11 @@ import java.util.Map;
  *
  * 皮肤系统联动：这里配的是**原皮**（枪本身），kubejs 的 player_skin 里配的是**枪皮**。
  * 玩家某把枪的枪皮为 true → 这把枪进他的显示队列，并且枪皮本身也作为条目出现（gun|skin）。
+ *
+ * player_skin 支持两种写法：
+ *   ① 槽位分组（推荐）："skins": { "rifle": ["ffgspf:ak47_erximofu"], "pistol": [], "knife": [] }
+ *      → 每个槽位的 id 只在该槽位生效（skinSlotFilter = false 可关掉这个过滤，退回全槽位通用）
+ *   ② 扁平："skins": { "tacz:ak47_skin_fox": true } → 不带槽位信息，全槽位通用
  *
  * 条目写法：
  *   1) "tacz:ak47"               → TaCZ 枪械 id（原皮，自动包成枪械物品）
@@ -81,7 +87,10 @@ public final class LoadoutConfig {
               "showBaseGuns": true,
               "skinEntries": true,
               "showAllWhenNoSkinFile": true,
-              "ammo": { "magazine": 30, "reserve": 300, "fire": "AUTO" },
+              "ammo": { "magazine": -1, "reserve": -1, "fire": "NATIVE" },
+              "previewContext": "FIXED",
+              "previewScale": 80,
+              "attachmentUi": "CLASSIC",
               "attachments": {
                 "SCOPE": [],
                 "MUZZLE": [],
@@ -120,14 +129,30 @@ public final class LoadoutConfig {
     private static boolean allowEditInMatch = true;
     private static String skinFolder = "kubejs/config/player_skin";
     private static boolean skinPrefixMatch = true;
+    /** v27 新增：player_skin 的 skins.rifle / skins.pistol ... 槽位分组是否只在对应槽位生效 */
+    private static boolean skinSlotFilter = true;
     private static boolean showAllWhenNoSkinFile = true;
     private static boolean showBaseGuns = true;
     private static boolean skinEntries = true;
 
     /** 全局弹药默认值：弹夹 / 备弹 / 开火模式 */
-    private static int defaultMagazine = 30;
-    private static int defaultReserve = 300;
-    private static String defaultFire = "AUTO";   // v22：默认连发（枪不支持连发会自动回退单发）
+    // ★ v43（主人 2026-09-21）：默认改成「用原版枪的数据」——
+    //   没配 magazine 就取 TaCZ 原版弹匣量，备弹 = 弹匣 × 3；fire 没配 = 枪支持全自动就用全自动，否则单发
+    private static int defaultMagazine = -1;
+    private static int defaultReserve = -1;
+    private static String defaultFire = "NATIVE";
+
+    // ★ v46：配件预览的渲染上下文（TaCZ 的枪模/配件在不同 ItemDisplayContext 下渲染结果不一样）
+    //   可选：FIXED / GROUND / GUI / THIRD_PERSON_RIGHT_HAND / THIRD_PERSON_LEFT_HAND /
+    //        FIRST_PERSON_RIGHT_HAND / FIRST_PERSON_LEFT_HAND / HEAD
+    //   哪个能把「枪口/枪托/握把/激光」都画出来就用哪个
+    private static String previewContext = "FIXED";
+
+    /** ★ v47：配件预览的额外放大倍数（配合 ItemRenderer.renderStatic，默认 80） */
+    private static float previewScale = 80.0f;
+
+    /** ★ v50：配件编辑界面用哪套 —— true = ModernUI，false = 原版画布（★发布版默认 false） */
+    private static boolean modernAttachmentUi = false;
 
     /** 单把枪的弹药覆盖：枪 id → [弹夹, 备弹] */
     private static final java.util.Map<String, int[]> AMMO_BY_GUN = new java.util.HashMap<>();
@@ -189,6 +214,12 @@ public final class LoadoutConfig {
         return showAllWhenNoSkinFile;
     }
 
+    /** v27：皮肤文件的槽位分组（skins.rifle / skins.pistol ...）是否只在对应槽位生效（false = 全槽位通用） */
+    public static boolean skinSlotFilter() {
+        reloadIfChanged();
+        return skinSlotFilter;
+    }
+
     /** 原皮条目是否直接给所有玩家（false = 只有拥有该枪任一枪皮的玩家才能用） */
     public static boolean showBaseGuns() {
         reloadIfChanged();
@@ -209,6 +240,24 @@ public final class LoadoutConfig {
     }
 
     /** 某把枪的开火模式（SEMI/AUTO/BURST） */
+    /** ★ v46：配件预览用的 ItemDisplayContext 名字 */
+    /** ★ v50：配件编辑界面是否用 ModernUI 版 */
+    public static boolean useModernAttachmentUi() {
+        reloadIfChanged();
+        return modernAttachmentUi;
+    }
+
+    /** ★ v47：预览放大倍数 */
+    public static float previewScale() {
+        reloadIfChanged();
+        return previewScale <= 0f ? 80.0f : previewScale;
+    }
+
+    public static String previewContext() {
+        reloadIfChanged();
+        return previewContext == null || previewContext.isBlank() ? "FIXED" : previewContext.trim().toUpperCase();
+    }
+
     public static String fireFor(String baseGunId) {
         reloadIfChanged();
         String v = FIRE_BY_GUN.get(baseGunId);
@@ -350,6 +399,7 @@ public final class LoadoutConfig {
             allowEditInMatch = bool(obj, "allowEditInMatch", true);
             skinFolder = str(obj, "skinFolder", "kubejs/config/player_skin");
             skinPrefixMatch = bool(obj, "skinPrefixMatch", true);
+            skinSlotFilter = bool(obj, "skinSlotFilter", true);
             showAllWhenNoSkinFile = bool(obj, "showAllWhenNoSkinFile", true);
             showBaseGuns = bool(obj, "showBaseGuns", true);
             skinEntries = bool(obj, "skinEntries", true);
@@ -369,9 +419,15 @@ public final class LoadoutConfig {
             }
             if (obj.has("ammo") && obj.get("ammo").isJsonObject()) {
                 JsonObject a = obj.getAsJsonObject("ammo");
-                defaultMagazine = intVal(a, "magazine", intVal(a, "mag", 30));
-                defaultReserve = intVal(a, "reserve", 300);
-                defaultFire = str(a, "fire", str(a, "fireMode", "AUTO"));
+                defaultMagazine = intVal(a, "magazine", intVal(a, "mag", -1));
+                defaultReserve = intVal(a, "reserve", -1);
+                defaultFire = str(a, "fire", str(a, "fireMode", "NATIVE"));
+            }
+            previewContext = str(obj, "previewContext", "FIXED");
+            modernAttachmentUi = "MODERN".equalsIgnoreCase(str(obj, "attachmentUi", "CLASSIC"));
+            try {
+                if (obj.has("previewScale")) previewScale = obj.get("previewScale").getAsFloat();
+            } catch (Throwable ignored) {
             }
             attachmentLimit = Math.max(1, intVal(obj, "attachmentLimit", 6));
             maxPresets = Math.max(1, intVal(obj, "maxPresets", 5));
@@ -498,6 +554,7 @@ public final class LoadoutConfig {
         o.addProperty("refillOnRespawn", refillOnRespawn);
         o.addProperty("allowEditInMatch", allowEditInMatch);
         o.addProperty("skinFolder", skinFolder);
+        o.addProperty("skinSlotFilter", skinSlotFilter);
         o.addProperty("showBaseGuns", showBaseGuns);
         o.addProperty("skinEntries", skinEntries);
         o.addProperty("defaultMagazine", defaultMagazine);

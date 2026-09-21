@@ -84,7 +84,11 @@ dependencies {
     // FPSMatch 运行必需的（它自己都声明成 modCompileOnly/compileOnly，不会传递过来）
     modRuntimeOnly "maven.modrinth:kotlin-for-forge:4.11.0"
     modRuntimeOnly "maven.modrinth:cloth-config:11.1.136+forge"
-    modRuntimeOnly "icyllis.modernui:ModernUI-Forge:1.20.1-3.12.0.1"
+
+    // ModernUI：★ 编译期也要可见（配件页/背包页要用它的 Fragment/View 重写 UI）
+    modCompileOnly "icyllis.modernui:ModernUI-Forge:1.20.1-3.12.0.1"      // ← 新增
+    modRuntimeOnly "icyllis.modernui:ModernUI-Forge:1.20.1-3.12.0.1"      // ← 原有，别删
+    compileOnly "icyllis.modernui:ModernUI-Core:3.12.0"                   // ← 新增（Fragment/TextView 在这）
     withoutMinecraftLibraries(additionalRuntimeClasspath(implementation("icyllis.modernui:ModernUI-Core:3.12.0")))
     withoutMinecraftLibraries(additionalRuntimeClasspath(implementation("icyllis.modernui:ModernUI-Markflow:3.12.0")))
 

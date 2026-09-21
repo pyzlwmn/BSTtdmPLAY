@@ -49,6 +49,8 @@ public final class TcpLoadoutServerHelper {
         TcpNetwork.sendToPlayer(player, LoadoutManager.buildPacket(player, inMatch, canEdit));
         if (map == null) {
             player.displayClientMessage(Component.literal("§7你现在不在对局里，选的装备会存下来、进局自动用"), false);
+        } else if (inMatch) {
+            player.displayClientMessage(Component.literal("§e对局进行中：背包只读，不能编辑"), true);
         }
     }
 
@@ -58,6 +60,9 @@ public final class TcpLoadoutServerHelper {
         boolean inMatch = map != null && map.isStarted();
         boolean canEdit = map == null ? LoadoutConfig.enabled() : map.canEditLoadout();
         TcpNetwork.sendToPlayer(player, LoadoutManager.buildPacket(player, inMatch, canEdit, TcpLoadoutS2CPacket.FLAG_OPEN));
+        if (inMatch) {
+            player.displayClientMessage(Component.literal("§e对局进行中：背包只读，不能编辑"), true);
+        }
     }
 
     /** 改装台（v26）：start = 把枪 + 它能用的配件发给客户端（客户端虚空打开 TaCZ 改装页）；save = 存成品枪 */
