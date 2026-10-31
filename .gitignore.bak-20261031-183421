@@ -1,0 +1,39 @@
+# ---- Gradle / 构建产物（不要提交）----
+.gradle/
+build/
+out/
+bin/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---- 运行目录：测试世界 / 日志 / 按键配置 / 账号缓存，全都不提交 ----
+run/
+run-*/
+logs/
+*.log
+
+# ---- 联合编译用的 FPSMatch 源码：自己 clone，别混进本仓库 ----
+FPSMatch/
+FPSMatch.bak/
+
+# ---- IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+nbproject/
+
+# ---- 本地机密：API key / token / 私有配置，绝对不要提交 ----
+*.secret
+**/local.properties
+.env
+.env.*
+secret*.json
+
+# ---- 系统垃圾 ----
+.DS_Store
+Thumbs.db
+desktop.ini

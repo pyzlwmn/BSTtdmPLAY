@@ -53,6 +53,11 @@ legacyForge {
 sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 repositories {
+    // ==== 国内镜像优先（2026-10-31 加，解决 maven.neoforged.net 超时） ====
+    maven { name = 'BMCLAPI'; url = 'https://bmclapi2.bangbang93.com/maven/' }
+    maven { name = 'AliyunPublic'; url = 'https://maven.aliyun.com/repository/public' }
+    maven { name = 'AliyunGradle'; url = 'https://maven.aliyun.com/repository/gradle-plugin' }
+    // ==== 镜像结束 ====
     mavenCentral()
     maven { name = 'PTCrysReleases'; url = uri('https://maven.ptcrys.net/releases') }
     maven { name = 'CurseMaven'; url = 'https://www.cursemaven.com'; content { includeGroup 'curse.maven' } }

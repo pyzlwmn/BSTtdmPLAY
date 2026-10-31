@@ -1,0 +1,285 @@
+package com.github.pyzlwmn.filtdm.TeamCompetition.client;
+
+import com.github.pyzlwmn.filtdm.TeamCompetition.TeamCompetitionMap;
+import net.ptcrys.fpsmatch.common.client.tab.TabRenderer;
+import net.ptcrys.fpsmatch.core.data.PlayerData;
+import net.ptcrys.fpsmatch.util.RenderUtil;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.PlayerFaceRenderer;
+import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.world.scores.Objective;
+import net.minecraft.world.scores.Scoreboard;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.api.distmarker.OnlyIn;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+@OnlyIn(Dist.CLIENT)
+public class TcpTabRenderer implements TabRenderer {
+
+    private static final int C_RED = 0xFFE63946;
+    private static final int C_BLUE = 0xFF3B82F6;
+    private static final int C_TEXT = 0xFFFFFFFF;
+    private static final int C_DIM = 0xFFB9C2CF;
+    private static final int C_MUTE = 0xFF8B9BB0;
+    private static final int C_GOLD = 0xFFFFC93C;
+    private static final int C_ALT = 0x14FFFFFF;
+    private static final int C_TRACK = 0x33FFFFFF;
+
+    private static final int C_DEAD = 0xFF6E7C8C;
+
+    private static final int C_BG = 0xE6101620;
+
+    private static final int C_COL_BG = 0x66000000;
+
+    private static final float TAB_SCALE = 1.0f;
+
+    private int lastRed = Integer.MIN_VALUE;
+    private int lastBlue = Integer.MIN_VALUE;
+    private long scorePopAt = 0L;
+
+    private static final int PAD = 8;
+    private static final int AVATAR = 12;
+    private static final int COL_NAME = 96;
+    private static final int COL_NUM = 28;
+    private static final int COL_DMG = 44;
+    private static final int COL_KD = 34;
+    private static final int ROW_H = 12;
+    private static final int ROW_GAP = 1;
+    private static final int COL_GAP = 10;
+    private static final int BAR_H = 4;
+    private static final int HEAD_H = 36;
+    private static final int TEAM_HEAD_H = 26;
+    private static final int COLS_H = 11;
+    private static final int FOOT_H = 12;
+
+    @Override
+    public String getGameType() {
+        return TeamCompetitionMap.TYPE;
+    }
+
+    @Override
+    public void render(GuiGraphics g, int windowWidth, List<PlayerInfo> players, Scoreboard scoreboard, Objective objective) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        int screenW = windowWidth;
+        int screenH = mc.getWindow().getGuiScaledHeight();
+
+        Map<String, List<PlayerInfo>> byTeam = RenderUtil.getTeamsPlayerInfo(players);
+
+        List<PlayerInfo> reds = new ArrayList<>(byTeam.getOrDefault("red", List.of()));
+        List<PlayerInfo> blues = new ArrayList<>(byTeam.getOrDefault("blue", List.of()));
+        if (reds.isEmpty() && blues.isEmpty()) {
+            reds.addAll(players);
+        }
+
+        Comparator<PlayerInfo> cmp = Comparator
+                .comparingInt((PlayerInfo p) -> -stat(p, "kills"))
+                .thenComparingInt(p -> -stat(p, "damage"));
+        reds.sort(cmp);
+        blues.sort(cmp);
+
+        int rows = Math.max(1, Math.max(reds.size(), blues.size()));
+        int colW = AVATAR + 4 + COL_NAME + COL_NUM * 3 + COL_DMG + COL_KD + 12;
+        int colH = TEAM_HEAD_H + COLS_H + rows * (ROW_H + ROW_GAP) + PAD;
+        int panelW = colW * 2 + COL_GAP + PAD * 2;
+        int panelH = HEAD_H + colH + FOOT_H;
+
+        float scale = Math.min(TAB_SCALE,
+                Math.min(screenW * 0.92f / Math.max(1, panelW), screenH * 0.92f / Math.max(1, panelH)));
+        scale = Math.max(0.5f, scale);
+
+        g.pose().pushPose();
+        g.pose().translate(screenW / 2f, screenH / 2f, 0f);
+        g.pose().scale(scale, scale, 1f);
+
+        int x = -panelW / 2;
+        int y = -panelH / 2;
+
+        g.fill(x, y, x + panelW, y + panelH, C_BG);
+
+        UiDraw.panelEx(g, x, y, panelW, panelH, UiDraw.RADIUS_LARGE,
+                0xFF2A3A4A, 0xF0141D2A, 0xE60C121B, C_GOLD);
+
+        Font font = mc.font;
+        int target = Math.max(1, TcpHudData.target());
+
+        int hY = y + PAD;
+        g.drawString(font, "团队竞技", x + PAD, hY + 1, C_DIM, false);
+        UiDraw.iconCrosshair(g, x + PAD + 5, hY + 18, 5, 0xCCFFC93C);
+        g.drawString(font, "目标 " + TcpHudData.target() + " 分", x + PAD + 14, hY + 14, C_GOLD, false);
+
+        int redScore = TcpHudData.red();
+        int blueScore = TcpHudData.blue();
+        String rs = String.valueOf(redScore);
+        String bs = String.valueOf(blueScore);
+        float big = 1.8f;
+        int rsW = (int) (font.width(rs) * big);
+        int bsW = (int) (font.width(bs) * big);
+        int sepW = (int) (font.width(":") * big) + 12;
+        int totalW = rsW + bsW + sepW;
+        int bx = -totalW / 2;
+        int by = hY - 1;
+        float pop = 1f;
+        if (redScore != lastRed || blueScore != lastBlue) {
+            lastRed = redScore;
+            lastBlue = blueScore;
+            scorePopAt = System.currentTimeMillis();
+        }
+        float popT = Math.min(1f, (System.currentTimeMillis() - scorePopAt) / 320f);
+        pop = 1f + 0.32f * (1f - popT) * (1f - popT);
+        drawScaled(g, font, rs, bx, by, C_RED, big * pop);
+        drawScaled(g, font, ":", bx + rsW + 6, by + 2, C_MUTE, big * 0.8f);
+        drawScaled(g, font, bs, bx + rsW + sepW, by, C_BLUE, big * pop);
+
+        String time = "剩余 " + TcpHudData.formatTime(TcpHudData.displaySeconds());
+        g.drawString(font, time, x + panelW - PAD - font.width(time), hY + 1, C_GOLD, false);
+        int barW = 120;
+        int barX = x + panelW - PAD - barW;
+        int barY = hY + 14;
+        g.fill(barX, barY, barX + barW, barY + BAR_H, C_TRACK);
+        int limit = TcpHudData.timeLimit() > 0 ? TcpHudData.timeLimit() : Math.max(1, TcpHudData.displaySeconds());
+        float pct = Math.max(0f, Math.min(1f, (float) TcpHudData.displaySeconds() / limit));
+        g.fill(barX, barY, barX + Math.round(barW * pct), barY + BAR_H, C_GOLD);
+        UiDraw.iconClock(g, barX - 8, barY + 2, 5, 0xCCFFC93C);
+
+        int colY = y + HEAD_H;
+        int maxDmg = 0;
+        for (PlayerInfo p : reds) maxDmg = Math.max(maxDmg, stat(p, "damage"));
+        for (PlayerInfo p : blues) maxDmg = Math.max(maxDmg, stat(p, "damage"));
+
+        drawTeam(g, font, mc, x + PAD, colY, colW, colH, reds, C_RED, "红队", redScore, target, maxDmg);
+        drawTeam(g, font, mc, x + PAD + colW + COL_GAP, colY, colW, colH, blues, C_BLUE, "蓝队", blueScore, target, maxDmg);
+
+        int redDmg = 0, blueDmg = 0;
+        for (PlayerInfo p : reds) redDmg += stat(p, "damage");
+        for (PlayerInfo p : blues) blueDmg += stat(p, "damage");
+        String foot = "红队总伤害 " + redDmg + "  ·  蓝队总伤害 " + blueDmg;
+        g.drawString(font, foot, x + PAD, y + panelH - FOOT_H + 1, C_MUTE, false);
+
+        g.pose().popPose();
+    }
+
+    private void drawTeam(GuiGraphics g, Font font, Minecraft mc, int colX, int colY, int colW, int colH,
+                          List<PlayerInfo> team, int color, String teamName, int score, int target, int maxDmg) {
+
+        UiDraw.fillRounded(g, colX - 1, colY - 1, colW + 2, colH + 2, UiDraw.RADIUS_SMALL + 1, 0xFF25313D);
+        UiDraw.fillVGradient(g, colX, colY, colW, colH, UiDraw.RADIUS_SMALL, 0x6B131C27, 0x6B0A0F16);
+
+        UiDraw.iconDot(g, colX + 10, colY + 10, 3, color);
+        g.drawString(font, teamName, colX + 17, colY + 6, color, false);
+        String sc = score + " 分";
+        g.drawString(font, sc, colX + colW - 7 - font.width(sc), colY + 6, C_TEXT, false);
+
+        int tw = colW - 14;
+        int tx = colX + 7;
+        int ty = colY + 17;
+        g.fill(tx, ty, tx + tw, ty + BAR_H, C_TRACK);
+        float tp = Math.max(0f, Math.min(1f, (float) score / Math.max(1, target)));
+        g.fill(tx, ty, tx + Math.round(tw * tp), ty + BAR_H, color);
+
+        int nameY = colY + TEAM_HEAD_H;
+        int cx = colX + 7;
+        g.drawString(font, "玩家", cx + AVATAR + 4, nameY, C_MUTE, false);
+        cx += AVATAR + 4 + COL_NAME;
+        g.drawString(font, "K", cx + COL_NUM - font.width("K"), nameY, C_MUTE, false);
+        cx += COL_NUM;
+        g.drawString(font, "D", cx + COL_NUM - font.width("D"), nameY, C_MUTE, false);
+        cx += COL_NUM;
+        g.drawString(font, "A", cx + COL_NUM - font.width("A"), nameY, C_MUTE, false);
+        cx += COL_NUM;
+        g.drawString(font, "伤害", cx + COL_DMG - font.width("伤害"), nameY, C_MUTE, false);
+        cx += COL_DMG;
+        g.drawString(font, "K/D", cx + COL_KD - font.width("K/D"), nameY, C_MUTE, false);
+
+        UUID self = mc.player == null ? null : mc.player.getUUID();
+        int ry = nameY + COLS_H;
+        for (int i = 0; i < team.size(); i++) {
+            PlayerInfo info = team.get(i);
+            boolean isSelf = self != null && self.equals(info.getProfile().getId());
+
+            PlayerData pd = dataOf(info).orElse(null);
+            boolean dead = pd != null && !pd.isLiving();
+            if (dead && !isSelf) {
+                g.fill(colX + 2, ry, colX + colW - 2, ry + ROW_H, 0x33000000);
+            }
+            if (isSelf) {
+                g.fill(colX + 2, ry, colX + colW - 2, ry + ROW_H, 0x33FFC93C);
+                g.fill(colX + 2, ry, colX + 4, ry + ROW_H, C_GOLD);
+            } else if (i % 2 == 1) {
+                g.fill(colX + 2, ry, colX + colW - 2, ry + ROW_H, C_ALT);
+            }
+
+            PlayerFaceRenderer.draw(g, info.getSkinLocation(), colX + 7, ry, AVATAR);
+
+            int kills = stat(info, "kills");
+            int deaths = stat(info, "deaths");
+            int assists = stat(info, "assists");
+            int dmg = stat(info, "damage");
+
+            if (dead) {
+
+                g.fill(colX + 7, ry, colX + 7 + AVATAR, ry + AVATAR, 0x77000000);
+            }
+            int tx2 = colX + 7 + AVATAR + 4;
+            g.drawString(font, info.getProfile().getName(), tx2, ry + 2, dead ? C_DEAD : (isSelf ? C_GOLD : C_TEXT), false);
+
+            if (i == 0) {
+                UiDraw.iconCrown(g, tx2 + COL_NAME - 9, ry + 4, 8, 5, C_GOLD);
+            }
+
+            int numX = tx2 + COL_NAME;
+            g.drawString(font, String.valueOf(kills), numX + COL_NUM - font.width(String.valueOf(kills)), ry + 2, dead ? C_DEAD : C_TEXT, false);
+            numX += COL_NUM;
+            g.drawString(font, String.valueOf(deaths), numX + COL_NUM - font.width(String.valueOf(deaths)), ry + 2, C_DIM, false);
+            numX += COL_NUM;
+            g.drawString(font, String.valueOf(assists), numX + COL_NUM - font.width(String.valueOf(assists)), ry + 2, 0xFF9AD0A0, false);
+            numX += COL_NUM;
+
+            String ds = String.valueOf(dmg);
+            g.drawString(font, ds, numX + COL_DMG - font.width(ds), ry + 2, C_GOLD, false);
+            if (maxDmg > 0 && dmg > 0) {
+                int bw = Math.max(1, Math.round(COL_DMG * (float) dmg / maxDmg));
+                g.fill(numX, ry + ROW_H - 2, numX + bw, ry + ROW_H - 1, 0x99FFC93C);
+            }
+            numX += COL_DMG;
+
+            String kd = String.format(java.util.Locale.ROOT, "%.2f", kills / (float) Math.max(1, deaths));
+            g.drawString(font, kd, numX + COL_KD - font.width(kd), ry + 2, C_DIM, false);
+
+            ry += ROW_H + ROW_GAP;
+        }
+    }
+
+    private void drawScaled(GuiGraphics g, Font font, String s, int x, int y, int color, float scale) {
+        g.pose().pushPose();
+        g.pose().translate(x, y, 0f);
+        g.pose().scale(scale, scale, 1f);
+        g.drawString(font, s, 0, 0, color, true);
+        g.pose().popPose();
+    }
+
+    private static Optional<PlayerData> dataOf(PlayerInfo info) {
+        return RenderUtil.getPlayerData(info);
+    }
+
+    private static int stat(PlayerInfo info, String key) {
+        PlayerData d = dataOf(info).orElse(null);
+        if (d == null) return 0;
+        return switch (key) {
+            case "kills" -> d.getKills();
+            case "deaths" -> d.getDeaths();
+            case "assists" -> d.getAssists();
+            case "scores" -> d.getScores();
+            case "damage" -> Math.round(d.getDamage());
+            default -> 0;
+        };
+    }
+}

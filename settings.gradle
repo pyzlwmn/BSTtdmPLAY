@@ -1,5 +1,8 @@
 pluginManagement {
     repositories {
+        // mirror 2026-10-31
+        maven { name = 'BMCLAPI'; url = 'https://bmclapi2.bangbang93.com/maven/' }
+        maven { name = 'AliyunPublic'; url = 'https://maven.aliyun.com/repository/public' }
         gradlePluginPortal()
         maven {
             name = 'MinecraftForge'
