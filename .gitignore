@@ -41,3 +41,6 @@ desktop.ini
 # local backup dirs
 _backup*/
 _new.md
+
+# local file backups
+*.bak-*
