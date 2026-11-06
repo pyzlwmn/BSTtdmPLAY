@@ -1,0 +1,42 @@
+# 构建产物
+build/
+*/build/
+.gradle/
+*/.gradle/
+out/
+bin/
+
+# 运行目录（含日志/存档，绝不入库）
+run/
+run-client/
+run-client2/
+run-server/
+run-data/
+runs/
+logs/
+crash-reports/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# 本地杂项/备份/日志
+*.log
+build_*.log
+_backup_*/
+*.bak
+*.bak-*
+local.properties
+.env
+
+# 上游源码（构建时另行放置）
+FPSMatch/
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
